@@ -1,0 +1,413 @@
+---
+title: "Liver transplant microbiome and MDRB"
+author: "Medini K. Annavajhala"
+date: "July 19, 2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+## Generating Figure 2: Pre-transplant $\alpha$- and $\beta$-diversity
+
+This R Markdown document is part of a series used to analyze data and generate figures for the citation below. The current document includes all code and options used to generate Figure 2 from the manuscript, which looks at pre-liver transplant $\alpha$- and $\beta$-diversity and underlying liver disease etiology and severity.
+
+### Title:
+*Colonizing multidrug-resistant bacteria and the longitudinal evolution of the intestinal microbiome after liver transplantation*  
+
+### Authors:
+Medini K. Annavajhala, Angela Gomez-Simmonds, Nenad Macesic, Sean B. Sullivan, Anna Kress, Sabrina D. Khan, Marla J. Giddins, Stephania Stump, Grace I. Kim, Ryan Narain, Elizabeth C. Verna, Anne-Catrin Uhlemann  
+
+### Journal: 
+*Nature Communications* **2019** 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=3.5, fig.height=2.5, fig.path='Figure2/', 
+                      dev=c('png'), echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+### Load Required Libraries: 
+
+```{r libraries}
+library("phyloseq"); packageVersion("phyloseq")
+library("biomformat"); packageVersion("biomformat")
+library("data.table"); packageVersion("data.table")
+library("vegan"); packageVersion("vegan")
+library("ggplot2"); packageVersion("ggplot2")
+library("grid"); packageVersion("grid")
+library("gridExtra"); packageVersion("gridExtra")
+library("ggsignif"); packageVersion("ggsignif")
+library("dplyr"); packageVersion("dplyr")
+```
+
+
+### Generate Figure 2 panels A, C, E
+
+First, we import metadata and corresponding $\alpha$-diversity values for the 83 pre-transplant samples (see R Markdown file "Phyloseq_Objects.Rmd").
+
+In Figure 2, we looked at univariate associations between primary liver disease etiology, model for end-stage liver disease (MELD) at time of transplant (2016 calculator), and Child-Turcotte-Pugh (CTP) score (fixed effects) and Shannon and Chao $\alpha$-diversity (outcomes).
+
+```{r import_preLT}
+
+preLT_data <- read.table("inputs/Fig2_metadata.txt", header=T)
+colnames(preLT_data) 
+
+# Primary_Diagnosis: primary underlying liver disease etiology (reason for transplant)
+#       AIH: Autoimmune hepatitis (n=7)    
+#       ARLD: Alcohol-related liver disease (n=7)
+#       BILIARY: Etiologies related to biliary complications (n=4)
+#       HBV: Hepatitis B virus (n=8)
+#       HCV: Hepatitis C virus (n=37)
+#       NAFLD: Non-alcoholic fatty liver disease (n=14)
+#       PCLD: Polycystic liver/kidney disease (n=2)
+#       OTHER (n=4)
+# MELD_2016_Tx: MELD at time of transplant, 2016 calculator
+# MELD_2016_HighLow: above/below median MELD_2016_Tx (18)
+# Child_Pugh_Score: CTP score
+# Child_Pugh_Class: Standard definitions based on CTP score; A (5-6), B (7-9), C(10-13)
+```
+
+#### Panel A: Chao and Shannon $\alpha$-diversity by liver disease etiology
+
+We included etiologies with n > 5 in panel A. This excludes the "Biliary", "PCLD", and "Other" categories
+
+```{r panelA}
+df_a <- preLT_data[!(preLT_data$Primary_Diagnosis %in% c("BILIARY","PCLD","OTHER")),]
+p2_a <- ggplot(data = df_a,
+              mapping = aes(Primary_Diagnosis, value, 
+                            color=Primary_Diagnosis, fill= Primary_Diagnosis)) +
+          geom_point(width=0.10, size = 2, alpha=0.6) +
+          geom_path() +
+          facet_wrap(~variable, ncol = 2, scales = "free_y") +
+          geom_boxplot(alpha = 0.6) + 
+          ylab("") + 
+          xlab("") +
+          labs(color = "Primary\nIndication", fill = "Primary\nIndication") + 
+          scale_color_manual(values = c("AIH"="#7FC97F","ARLD"="#F0027F","HBV"="#FDC086",
+                                        "HCV"="#FFFF99","NAFLD"="#386CB0")) +
+          scale_fill_manual(values = c("AIH"="#7FC97F","ARLD"="#F0027F","HBV"="#FDC086",
+                                        "HCV"="#FFFF99","NAFLD"="#386CB0")) +
+          theme_classic() + 
+          theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                panel.background = element_blank(), panel.border = element_rect(fill=NA), 
+                axis.line = element_line(colour = "black"),
+                axis.text.x = element_blank(),
+                strip.background = element_blank(), strip.text = element_text(size=12), 
+                legend.position="right", legend.justification="left",
+                legend.margin=margin(0,0,0,0),legend.box.margin=margin(0,0,0,0))
+
+```
+
+We want to add some annotations for statistical comparisons; for univariate comparisons pre-LT (no repeated measures), we used a linear regression model with underlying diagnosis as the independent and $\alpha$-diversity as the outcome.
+
+ARLD clearly had the lowest $\alpha$-diversity upon visual inspection of p2_a; so, we re-factor the Primary_Diagnosis variable to keep ARLD as the Reference level and compare all other etiologies against ARLD.
+
+```{r panelA_stats}
+
+preLT_data$Primary_Diagnosis = relevel(preLT_data$Primary_Diagnosis, ref = "ARLD")
+
+summary(lm(value ~ Primary_Diagnosis, data=preLT_data[(preLT_data$variable=="Shannon"),]))
+summary(lm(value ~ Primary_Diagnosis, data=preLT_data[(preLT_data$variable=="Chao"),]))
+
+#ARLD has significantly lower Chao and Shannon diversity:
+#Shannon: ARLD vs. AIH (p<0.01,**),HBV (p<0.01,**),HCV (p<0.001,***),NAFLD (p<0.001,***)
+#Chao: ARLD vs. HBV (p<0.05,*),HCV (p<0.1,+)
+
+
+annotation_dfa <- data.frame(variable=c("Chao","Chao","Shannon","Shannon",
+                                        "Shannon","Shannon"), 
+                            start=c("ARLD","ARLD","ARLD","ARLD","ARLD","ARLD"), 
+                            end=c("HBV","HCV","AIH","HBV","HCV","NAFLD"),
+                            y=c(90,50,3.45,3.75,0.45,0.05),
+                            label=c("*", "+","**","**","***","***"))
+
+p2_a <- ggplot(data = df_a,
+              mapping = aes(Primary_Diagnosis, value, 
+                            color=Primary_Diagnosis, fill= Primary_Diagnosis)) +
+          geom_point(width=0.10, size = 2, alpha=0.6) +
+          geom_path() +
+          geom_signif(inherit.aes = FALSE, data=annotation_dfa,
+              aes(xmin=start, xmax=end, annotations=label, y_position=y),
+              textsize = 3, vjust = 0.0, tip_length = c(0,0),
+              manual=TRUE) +
+          facet_wrap(~variable, ncol = 2, scales = "free_y") +
+          geom_boxplot(alpha = 0.6) + 
+          ylab("") + 
+          xlab("") +
+          labs(color = "Primary\nIndication", fill = "Primary\nIndication") + 
+          scale_color_manual(values = c("AIH"="#7FC97F","ARLD"="#F0027F","HBV"="#FDC086",
+                                        "HCV"="#FFFF99","NAFLD"="#386CB0")) +
+          scale_fill_manual(values = c("AIH"="#7FC97F","ARLD"="#F0027F","HBV"="#FDC086",
+                                        "HCV"="#FFFF99","NAFLD"="#386CB0")) +
+          theme_classic() + 
+          theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                panel.background = element_blank(), panel.border = element_rect(fill=NA), 
+                axis.line = element_line(colour = "black"),
+                axis.text.x = element_blank(),
+                strip.background = element_blank(), strip.text = element_text(size=12), 
+                legend.position="right", legend.justification="left",
+                legend.margin=margin(0,0,0,0),legend.box.margin=margin(0,0,0,0))
+
+p2_a
+```
+
+
+#### Panel C: Chao and Shannon $\alpha$-diversity by transplant MELD
+
+Then we plot both Chao and Shannon diversity indices grouped by above/below median transplant MELD (> 18 vs. <=18). As with panel A, we add in the annotation for the statistical comparisons
+
+```{r panelC}
+preLT_data$MELD_2016_HighLow = factor(preLT_data$MELD_2016_HighLow,levels=c("LOW","HIGH"))
+
+summary(lm(value ~ MELD_2016_HighLow, data=preLT_data[(preLT_data$variable=="Shannon"),]))
+summary(lm(value ~ MELD_2016_HighLow, data=preLT_data[(preLT_data$variable=="Chao"),]))
+
+#High transplant MELD is associated with significantly lower Shannon (p<0.0001, ****) 
+#and Chao (p<0.0001, ****) $\alpha$-diversity
+
+annotation_dfc <- data.frame(variable=c("Chao","Shannon"), 
+                            start=c("LOW","LOW"), 
+                            end=c("HIGH","HIGH"),
+                            y=c(350,4.0),
+                            label=c("****","****"))
+
+p2_c <- ggplot(data = preLT_data,
+              mapping = aes(MELD_2016_HighLow, value, 
+                            color=MELD_2016_HighLow, fill= MELD_2016_HighLow)) +
+          geom_point(width=0.10, size = 2, alpha=0.6) +
+          geom_path() +
+          geom_signif(inherit.aes = FALSE, data=annotation_dfc,
+              aes(xmin=start, xmax=end, annotations=label, y_position=y),
+              textsize = 3, vjust = 0.0, tip_length = c(0,0),
+              manual=TRUE) +
+          facet_wrap(~variable, ncol = 2, scales = "free_y") +
+          geom_boxplot(alpha = 0.6) + 
+          ylab("") + 
+          xlab("") +
+          labs(color = "MELD\n(2016)", fill = "MELD\n(2016)") + 
+          scale_color_manual(values = c("LOW"="#2d51b5","HIGH"="#c70643")) +
+          scale_fill_manual(values = c("LOW"="#2d51b5","HIGH"="#c70643")) +
+          theme_classic() + 
+          theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                panel.background = element_blank(), panel.border = element_rect(fill=NA), 
+                axis.line = element_line(colour = "black"),
+                axis.text.x = element_blank(),
+                strip.background = element_blank(), strip.text = element_text(size=12), 
+                legend.position="right", legend.justification="left",
+                legend.margin=margin(0,0,0,0),legend.box.margin=margin(0,0,0,0))
+
+p2_c
+```
+
+
+#### Panel E: Chao and Shannon $\alpha$-diversity by transplant CTP
+
+Same thing; we then plot both Chao and Shannon diversity indices grouped by Child-Turcotte-Pugh (CTP) class (classes A, B, C)
+
+
+```{r panelE}
+preLT_data$Child_Pugh_Class = relevel(preLT_data$Child_Pugh_Class, ref="A")
+
+summary(lm(value ~ Child_Pugh_Class, data=preLT_data[(preLT_data$variable=="Shannon"),]))
+summary(lm(value ~ Child_Pugh_Class, data=preLT_data[(preLT_data$variable=="Chao"),]))
+
+preLT_data$Child_Pugh_Class = relevel(preLT_data$Child_Pugh_Class, ref="B")
+summary(lm(value ~ Child_Pugh_Class, data=preLT_data[(preLT_data$variable=="Shannon"),]))
+summary(lm(value ~ Child_Pugh_Class, data=preLT_data[(preLT_data$variable=="Chao"),]))
+
+
+#CTP Class is associated with significantly lower $\alpha$-diversity:
+#Shannon: A vs B (p=0.08, +), A vs C (p<0.0001, ****), B vs C (p<0.001, ***)
+#Chao: A vs B (p<0.01, **), A vs C (p<0.0001, ****), B vs C (p<0.01, **)
+
+annotation_dfe <- data.frame(variable=c("Chao","Chao","Chao","Shannon",
+                                        "Shannon","Shannon"), 
+                            start=c("A","A","B","A","A","B"), 
+                            end=c("B","C","C","B","C","C"),
+                            y=c(140,100,60,1.5,1.0,0.5),
+                            label=c("**","****","**","+","****","***"))
+
+preLT_data$Child_Pugh_Class = factor(preLT_data$Child_Pugh_Class, levels=c("A","B","C"))
+
+p2_e <- ggplot(data = preLT_data,
+              mapping = aes(Child_Pugh_Class, value, 
+                            color=Child_Pugh_Class, fill= Child_Pugh_Class)) +
+          geom_point(width=0.10, size = 2, alpha=0.6) +
+          geom_path() +
+          geom_signif(inherit.aes = FALSE, data=annotation_dfe,
+              aes(xmin=start, xmax=end, annotations=label, y_position=y),
+              textsize = 3, vjust = 0.0, tip_length = c(0,0),
+              manual=TRUE) +
+          facet_wrap(~variable, ncol = 2, scales = "free_y") +
+          geom_boxplot(alpha = 0.6) + 
+          ylab("") + 
+          xlab("") +
+          labs(color = "CTP\nClass", fill = "CTP\nClass") + 
+          scale_color_manual(values = c("A"="#6FB98F","B"="#2C7873","C"="#004445")) +
+          scale_fill_manual(values = c("A"="#6FB98F","B"="#2C7873","C"="#004445")) +
+          theme_classic() + 
+          theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                panel.background = element_blank(), panel.border = element_rect(fill=NA), 
+                axis.line = element_line(colour = "black"),
+                axis.text.x = element_blank(),
+                strip.background = element_blank(), strip.text = element_text(size=12), 
+                legend.position="right", legend.justification="left",
+                legend.margin=margin(0,0,0,0),legend.box.margin=margin(0,0,0,0))
+
+p2_e
+```
+
+
+### Generate Figure 2 panels B, D, F
+
+First, we import the phyloseq objects we made in our earlier markdown file - we will need the relative abundance data to calculate and plot $\beta$-diversity metrics by our metadata categories. After importing, we need to subset our phyloseq objects to retain only pre-LT samples and add in the metadata we used above for panels A, C, and E. 
+
+```{r import-preLT-phylo}
+
+phylo_relabun_filtered = readRDS("inputs/phylo_relabun_filtered.RDS")
+
+preLT_relabun = prune_samples(sample_names(phylo_relabun_filtered) %in% 
+                                preLT_data$StoolID, phylo_relabun_filtered)
+
+df1 <- preLT_data[(preLT_data$variable=="Shannon"),1:6] #Metadata from data we used before
+df2 <- data.frame(sample_data(preLT_relabun), 
+                  "StoolID"=rownames(sample_data(preLT_relabun))) #Sample names 
+merged <- merge(df2, df1, by="StoolID") #Merge preLT metadata with phyloseq object
+merged <- sample_data(merged)
+sample_names(merged) = merged$StoolID #fix names
+sample_data(preLT_relabun) <- sample_data(merged)
+
+```
+
+Now we can calculate UniFrac $\beta$-diversity
+
+```{r preLT-beta-div}
+
+DistUF = phyloseq::distance(preLT_relabun, "uniFrac")
+ordUF = ordinate(preLT_relabun, method = "PCoA", distance = DistUF)
+
+```
+
+The `adonis` function from the `vegan` package is used to run a permutational ANOVA (PERMANOVA) to test for significant clustering of $\beta$-diversity by variable, as shown below
+
+#### Panel B
+
+```{r panelB}
+p2_b = plot_ordination(preLT_relabun, ordUF, color = "Primary_Diagnosis") + 
+  geom_point(size=1.5, alpha=0.2) +
+  labs(color="") +
+  ylim(-0.50,0.50) +
+  xlim(-0.50,0.50)
+
+#AIH and ARLD seem to clearly cluster together, but is this statistically significant?
+
+metadata = data.frame(sample_data(preLT_relabun))
+
+#Make binary yes/no AIH and binary yes/no ARLD columns
+set.seed(2)
+metadata$AIH = with(metadata, ifelse(metadata$Primary_Diagnosis=="AIH","AIH","OTHER"))
+metadata$ARLD = with(metadata, ifelse(metadata$Primary_Diagnosis=="ARLD","ARLD","OTHER"))
+
+adonis(DistUF ~ ARLD, data=metadata) #P=0.014; yes (F =  1.842)
+adonis(DistUF ~ AIH, data=metadata) #P=0.312; no! (checked others, also not significant)
+
+# Make the plot
+sample_data(preLT_relabun)$Primary_Diagnosis=relevel(
+                          sample_data(preLT_relabun)$Primary_Diagnosis, ref="AIH")
+p2_b = p2_b +  stat_ellipse(data = subset(p2_b$data, Primary_Diagnosis=="ARLD"), 
+               type="norm",linetype = 2, lwd=0.8, geom="polygon", alpha=0.05, 
+               aes(fill=Primary_Diagnosis), show.legend = FALSE) + 
+  scale_color_manual(values = c("AIH"="#7FC97F","ARLD"="#F0027F","HBV"="#FDC086",
+                                        "HCV"="#FFFF99","NAFLD"="#386CB0", 
+                                        "BILIARY"="#BEAED4","PCLD"="#f542c5",
+                                "OTHER"="#c43996")) +
+  scale_fill_manual(values = c("ARLD"="#F0027F"), guide=F) +
+  annotate(geom="text",x = -0.10, y=-0.35,label="F(ARLD)=1.842",hjust=0) +
+  annotate(geom="text",x = -0.10, y=-0.45,label="P(ARLD)=0.014",hjust=0) +
+  theme_classic() +
+  theme(legend.margin = margin(0,0,0,0))
+
+p2_b
+```
+
+#### Panel D
+
+```{r panelD}
+
+sample_data(preLT_relabun)$MELD_2016_HighLow = factor(
+                            sample_data(preLT_relabun)$MELD_2016_HighLow,
+                            levels = c("LOW","HIGH"))
+
+#Do samples cluster by transplant MELD?
+adonis(DistUF ~ MELD_2016_HighLow, data=metadata) #P=0.001; yes (F=4.0099)
+
+p2_d = plot_ordination(preLT_relabun, ordUF, color = "MELD_2016_HighLow") + 
+  geom_point(size=1.5, alpha=0.2) +
+  labs(color="") +
+  ylim(-0.50,0.50) +
+  xlim(-0.50,0.50) +
+  scale_color_manual(values = c("LOW"="#2d51b5","HIGH"="#c70643")) +
+  annotate(geom="text",x = 0.20, y=-0.35,label="F=4.010",hjust=0) +
+  annotate(geom="text",x = 0.20, y=-0.45,label="P=0.001",hjust=0) +
+  stat_ellipse() +
+  theme_classic() 
+
+p2_d
+```
+
+####Panel F
+
+```{r panelF}
+
+#Do samples cluster by transplant CTP?
+adonis(DistUF ~ Child_Pugh_Class, data=metadata) #P=0.001; yes (F=2.8806)
+
+p2_f = plot_ordination(preLT_relabun, ordUF, color = "Child_Pugh_Class") + 
+  geom_point(size=1.5, alpha=0.2) +
+  labs(color="") +
+  ylim(-0.50,0.50) +
+  xlim(-0.50,0.50) +
+  scale_color_manual(values = c("A"="#6FB98F","B"="#2C7873","C"="#004445")) +
+  annotate(geom="text",x = 0.20, y=-0.35,label="F=2.881", hjust=0) +
+  annotate(geom="text",x = 0.20, y=-0.45,label="P=0.001", hjust=0) +
+  stat_ellipse() +
+  theme_classic() 
+
+p2_f
+
+```
+
+
+### Finishing touches
+
+The final Figure 2 incorporates the 6 plots produced in this markdown file. 
+
+```{r fig2, fig.width=7, fig.height=7.5, fig.path='Figure2/', dev=c('png','postscript'), dpi=300, echo=TRUE, warning=FALSE, message=FALSE}
+
+p2_a <- arrangeGrob(p2_a, top = textGrob("A", x = unit(0, "npc")
+         , y   = unit(1, "npc"), just=c("left","top"),
+         gp=gpar(col="black", fontsize=18, fontfamily="Arial")))
+
+p2_b <- arrangeGrob(p2_b, top = textGrob("B", x = unit(0, "npc")
+         , y   = unit(1, "npc"), just=c("left","top"),
+         gp=gpar(col="black", fontsize=18, fontfamily="Arial")))
+
+p2_c <- arrangeGrob(p2_c, top = textGrob("C", x = unit(0, "npc")
+         , y   = unit(1, "npc"), just=c("left","top"),
+         gp=gpar(col="black", fontsize=18, fontfamily="Arial")))
+
+p2_d <- arrangeGrob(p2_d, top = textGrob("D", x = unit(0, "npc")
+         , y   = unit(1, "npc"), just=c("left","top"),
+         gp=gpar(col="black", fontsize=18, fontfamily="Arial")))
+
+p2_e <- arrangeGrob(p2_e, top = textGrob("E", x = unit(0, "npc")
+         , y   = unit(1, "npc"), just=c("left","top"),
+         gp=gpar(col="black", fontsize=18, fontfamily="Arial")))
+
+p2_f <- arrangeGrob(p2_f, top = textGrob("F", x = unit(0, "npc")
+         , y   = unit(1, "npc"), just=c("left","top"),
+         gp=gpar(col="black", fontsize=18, fontfamily="Arial")))
+
+
+grid.arrange(p2_a,p2_b,p2_c,p2_d,p2_e,p2_f)
+
+```
+

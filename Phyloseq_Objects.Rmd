@@ -1,0 +1,128 @@
+---
+title: "Liver transplant microbiome and MDRB"
+author: "Medini K. Annavajhala"
+date: "July 17, 2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+## Generating Phyloseq Objects and $\alpha$-Diversity Metrics after QIIME1 OTU-calling
+
+This R Markdown document is part of a series used to analyze data and generate figures for the citation below. The current document includes all code and options used to generate phyloseq objects from QIIME1-based OTU calling outputs and to calculate $\alpha$-diversity metrics for further analysis.
+
+### Title:
+*Colonizing multidrug-resistant bacteria and the longitudinal evolution of the intestinal microbiome after liver transplantation*  
+
+### Authors:
+Medini K. Annavajhala, Angela Gomez-Simmonds, Nenad Macesic, Sean B. Sullivan, Anna Kress, Sabrina D. Khan, Marla J. Giddins, Stephania Stump, Grace I. Kim, Ryan Narain, Elizabeth C. Verna, Anne-Catrin Uhlemann  
+
+### Journal:
+*Nature Communications* **2019**
+
+*Author's Note*: I learned so much from Paul J. McMurdie's site for all things `phyloseq` [here](http://joey711.github.io/phyloseq/); truly a fantastic resource for those getting started with microbiome data analysis
+
+### Load Required Libraries: 
+
+```{r libraries}
+library("phyloseq"); packageVersion("phyloseq")
+library("biomformat"); packageVersion("biomformat")
+library("data.table"); packageVersion("data.table")
+```
+
+### Import and parse input files
+
+The biom file was generated using Greengenes 97 closed-reference OTU-calling through the NIAID Nephele platform, with default quality-filtering and paired-end-joining parameters
+
+```{r biom}
+biom_file <- "inputs/merged.biom"
+biomRead <- biomformat::read_biom(biom_file)
+biom <- import_biom(biomRead, parseFunction = parse_taxonomy_greengenes)  
+rank_names(biom)
+tax_table(biom) <- tax_table(biom)[, 1:7]
+```
+
+
+The tree is just the Greengenes 97 representative sequence tree as default, since we performed closed-reference OTU-calling (if we run open-reference OTU-calling, this would require a custom tree generated using the representative sequence from each called OTU)
+
+```{r tree}
+tree <- read_tree_greengenes("inputs/tree.tre")
+```
+
+We had to re-sequence some samples due to low read counts the first time around. We gave them different names to avoid duplicate records in the output biom file, which would throw an error. Here, the original (low-read-count) sample IDs are removed. To do this, we create a phyloseq object with artificial metadata (only the sample names), remove the sample names we don't want, and then substring the remaining sample IDs to the original 5-digit numeric code that we use in our lab
+
+```{r remove-dups}
+fake_metadata = data.frame(sample_names(biom)) #get just sample names as 'metadata'
+fake_metadata = sample_data(fake_metadata) #convert to phyloseq sample_data type
+sample_names(fake_metadata) = fake_metadata$sample_names.biom
+
+dups <- unlist(read.table("inputs/dups.txt")) #list of duplicated sample IDs
+
+phylo_init <- merge_phyloseq(biom,tree,fake_metadata) #generate artificial phyloseq object
+phylo = prune_samples(!(sample_data(phylo_init)$sample_names.biom %in% dups), phylo_init)
+
+sample_names(phylo) <- substr(sample_names(phylo),1,5) #substring names to 5-digit codes
+phylo #We finally ended up with 703 samples which passed all QC
+
+```
+
+I like to make a new taxonomy column in the phyloseq object's `tax_table` titled Genus_Species for easier labeling of figures, etc. down the line
+
+```{r genus_species}
+tax = as.data.frame(tax_table(phylo))
+tax$Genus_Species = paste(tax$Genus,tax$Species,sep=" ")
+tax$Genus_Species = gsub(" NA","", tax$Genus_Species) #remove "NA" for OTUs with
+#no species-level classification
+taxtable = tax_table(as.matrix(tax))
+rownames(taxtable) = taxa_names(phylo)
+colnames(taxtable) = c("Kingdom","Phylum","Class","Order","Family",
+                             "Genus","Species","Genus_Species")
+tax_table(phylo) = taxtable
+```
+
+### Generate and Filter Final Phyloseq Objects
+
+Now we convert from counts to relative abundance. Some downstream analyses are based on raw counts (i.e. $\alpha$-diversity, differential abundance testing) and some on relative abundance (i.e. $\beta$-diversity)
+
+```{r relative-abundance}
+phylo_relabun <- transform_sample_counts(phylo, function(x) x / sum(x))
+```
+
+However, before we begin, we have to filter out extremely low-abundance OTUs; these are likely artefacts from sequencing and add noise to the analyses. There are no standardized, published cutoffs for this - we use a very conservative cutoff of 0.005% average relative abundance across all samples in order to prevent over-filtering of the data
+
+```{r filtering}
+phylo_filter = filter_taxa(phylo_relabun, function(x) mean(x) < .00005,TRUE)
+rmtaxa = taxa_names(phylo_filter) #these are the taxa that will be removed
+alltaxa = taxa_names(phylo_relabun)
+myTaxa = alltaxa[!alltaxa %in% rmtaxa]
+
+#Filter both count- and relative abundance-based phyloseq objects
+
+phylo_relabun_filtered <- prune_taxa(myTaxa,phylo_relabun)
+phylo_relabun_filtered 
+phylo_filtered <- prune_taxa(myTaxa,phylo)
+phylo_filtered
+
+```
+
+We go from 1478 taxa in phylo and phylo_relabun to 878 taxa in phylo_filtered and phylo_relabun_filtered
+
+This is a good time to save the filtered phyloseq objects for future reference!
+
+```{r saveRDS}
+saveRDS(phylo_relabun_filtered, "inputs/phylo_relabun_filtered.RDS")
+saveRDS(phylo_filtered, "inputs/phylo_filtered.RDS")
+```
+
+Lastly, we can use the `plot_richness` function to calculate $\alpha$-diversity (Shannon, Chao) for each sample and then save the values for subsequent plotting and statistical analyses
+
+```{r alpha-diversity}
+pAlpha = plot_richness(phylo_filtered, measures = c("Chao1", "Shannon"))
+alphadt = data.table(pAlpha$data)
+write.table(alphadt, "inputs/LT_alpha_div.txt", row.names=F, sep="\t")
+```
+
